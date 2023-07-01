@@ -1,0 +1,15 @@
+{
+  "name": "example-build",
+  "pod": {
+    "cpu": "1",
+    "memory": "512Mi"
+  },
+  "phases": {
+    "build": ["echo 'Hello world'", "echo 'Hello World 2'"],
+    "artifacts": {
+      "local_target_dir": "builds",
+      "remote_target_dir": "remote/builds"
+    },
+    "finalize": ["echo 'Finalizing 1'", "echo 'Finalizing 2'"]
+  }
+}

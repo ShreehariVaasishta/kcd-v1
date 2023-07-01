@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os/exec"
@@ -43,7 +42,7 @@ type JsonConfigStruct struct {
 }
 
 func executeBuildPhase(buildCommands []string) error {
-	log.Println("Starting execution in Phase: Build")
+	log.Println("Entering Phase: Build")
 	for _, cmd := range buildCommands {
 		log.Println("Execution Command: ", cmd)
 		_cmd := exec.Command("sh", "-c", cmd)
@@ -51,20 +50,22 @@ func executeBuildPhase(buildCommands []string) error {
 		if err != nil {
 			return err
 		}
-		log.Println(tOutput)
+		log.Println(string(tOutput))
 	}
-	return nil
 
+	log.Println("Phase Complete: Build")
+	return nil
 }
 
 func executeArtifactsPhase(local_target_dir string, remote_target_dir string) error {
-	log.Println("Starting execution in Phase: Upload Artifacts")
+	log.Println("Entering Phase: Upload Artifacts")
 	log.Println("Uploading files in ", local_target_dir, "to ", remote_target_dir)
+	log.Println("Phase Complete: Upload Artifacts")
 	return nil
 }
 
 func executeFinalizePhase(finalizeCommands []string) error {
-	log.Println("Starting execution in Phase: Finalize")
+	log.Println("Entering Phase: Finalize")
 	for _, cmd := range finalizeCommands {
 		log.Println("Execution Command: ", cmd)
 		_cmd := exec.Command("sh", "-c", cmd)
@@ -72,8 +73,9 @@ func executeFinalizePhase(finalizeCommands []string) error {
 		if err != nil {
 			return err
 		}
-		log.Println(tOutput)
+		log.Println(string(tOutput))
 	}
+	log.Println("Phase Complete: Finalize")
 	return nil
 
 }
@@ -104,14 +106,14 @@ func readConfigJson(filePath string) (PhasesConfig, error) {
 	// Read the file
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return PhasesConfig{}, err
 	}
 	var jsonconfig PhasesConfig
 	err = json.Unmarshal(data, &jsonconfig)
 
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return PhasesConfig{}, err
 	}
 	return jsonconfig, nil
@@ -121,12 +123,12 @@ func readConfigJson(filePath string) (PhasesConfig, error) {
 func main() {
 	configJson, err := readConfigJson("/config/config.json")
 
-	fmt.Println(configJson)
+	log.Println(configJson)
 	// Execute the phases
 	err = handlePhases(configJson)
 	if err != nil {
 		log.Fatalf("Error executing phases: %v", err)
 	}
 
-	fmt.Println("All phases executed successfully.")
+	log.Println("All phases executed successfully.")
 }
