@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource" // Updated import path
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -64,7 +62,6 @@ var (
 
 	// Json
 	jsonConfigPath string
-	jsonContents   JsonConfigStruct
 )
 
 func init() {
@@ -188,9 +185,9 @@ func createBuildPod(clientset *kubernetes.Clientset, jsonPod PodConfig, buildNam
 	// Create the pod
 	err := clientset.CoreV1().Pods(buildNamespace).Delete(context.TODO(), pod.Name, metaV1.DeleteOptions{})
 	time.Sleep(120)
-	// if err != nil {
-	// return err
-	// }
+	if err != nil {
+		return err
+	}
 
 	// Create the pod
 	_, err = clientset.CoreV1().Pods(buildNamespace).Create(context.TODO(), pod, metaV1.CreateOptions{})
@@ -233,78 +230,6 @@ func createConfigMap(clientset *kubernetes.Clientset, buildName, buildNamespace 
 		return err
 	}
 
-	return nil
-}
-
-func createGoConfigMap(clientset *kubernetes.Clientset, buildNamespace string) error {
-	buildName := "goconfigmap"
-	// Check if the ConfigMap already exists
-	_, err := clientset.CoreV1().ConfigMaps(buildNamespace).Get(context.TODO(), buildName, metaV1.GetOptions{})
-	if err == nil {
-		// ConfigMap already exists, update it with new data
-
-		// Read the Go program file
-		// goProgramPath := filepath.Join("phases", "phases") // Update with the path to the Go program relative to the root of your project
-		goProgramContent, err := ioutil.ReadFile("runner.go")
-
-		if err != nil {
-			return err
-		}
-
-		// Create ConfigMap data
-		data := make(map[string]string)
-		data["main.go"] = string(goProgramContent)
-
-		// Update the ConfigMap with new data
-		configMap := &corev1.ConfigMap{
-			ObjectMeta: metaV1.ObjectMeta{
-				Name:      buildName,
-				Namespace: buildNamespace,
-			},
-			Data: data,
-		}
-
-		_, err = clientset.CoreV1().ConfigMaps(buildNamespace).Update(context.TODO(), configMap, metaV1.UpdateOptions{})
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("ConfigMap %s updated successfully\n", buildName)
-		return nil
-	} else if !k8serrors.IsNotFound(err) {
-		// An error occurred while retrieving the ConfigMap
-		return err
-	}
-
-	// ConfigMap doesn't exist, create it
-
-	// Read the Go program file
-	goProgramPath := filepath.Join("phases", "phases.go") // Update with the path to the Go program relative to the root of your project
-	goProgramContent, err := ioutil.ReadFile(goProgramPath)
-	if err != nil {
-		return err
-	}
-
-	// Create ConfigMap data
-	data := make(map[string]string)
-	data["main.go"] = string(goProgramContent)
-
-	// Create the ConfigMap object
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metaV1.ObjectMeta{
-			Name:      buildName,
-			Namespace: buildNamespace,
-		},
-		Data: data,
-	}
-
-	// Create the ConfigMap
-	_, err = clientset.CoreV1().ConfigMaps(buildNamespace).Create(context.TODO(), configMap, metaV1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("ConfigMap %s created successfully\n", buildName)
 	return nil
 }
 
