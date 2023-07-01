@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -19,18 +20,61 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
+// Phases configs
+type PhasesConfig struct {
+	BuildPhase
+	ArtifactsPhase
+	FinalizePhase
+}
+
+type BuildPhase struct {
+	Build []string `json:"build"`
+}
+
+type ArtifacsNestedPhase struct {
+	LocalTargetDir  string `json:"local_target_dir"`
+	RemoteTargetDir string `json:"remote_target_dir"`
+}
+type ArtifactsPhase struct {
+	Artifacts ArtifacsNestedPhase `json:"artifacts"`
+}
+
+type FinalizePhase struct {
+	Finalize []string `json:"finalize"`
+}
+
+// Pod Specific Configs
+type PodConfig struct {
+	CPU    string `json:"cpu"`
+	Memory string `json:"memory"`
+}
+
+type JsonConfigStruct struct {
+	PodCfg PodConfig    `json:"pod"`
+	Phases PhasesConfig `json:"phases"`
+}
+
 // Rest of the code...
 
 var (
+	// Kubernetes
 	kubeconfig     string
 	buildName      string
 	buildNamespace string
+
+	// Json
+	jsonConfigPath string
+	jsonContents   JsonConfigStruct
 )
 
 func init() {
 	flag.StringVar(&kubeconfig, "kubeconfig", getKubeconfigPath(), "Path to the kubeconfig file")
 	flag.StringVar(&buildName, "build", "", "Name of the build")
 	flag.StringVar(&buildNamespace, "namespace", "scicd", "Namespace of the build")
+
+	// Add a new flag for jsonConfigPath
+	flag.StringVar(&jsonConfigPath, "jsonConfig", "", "Path to the JSON config file")
+
 	flag.Parse()
 }
 
@@ -46,26 +90,31 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Check if jsonConfigPath is provided
+	if jsonConfigPath == "" {
+		log.Fatal("jsonConfigPath not provided")
+		return
+	}
+	jsonContents, err := readJsonFile(jsonConfigPath)
+	log.Println(jsonContents)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Create the namespace if it doesn't exist
 	err = createNamespace(clientset, buildNamespace)
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Create the Json ConfigMap
+	err = createConfigMap(clientset, buildName, buildNamespace, jsonContents.Phases, "config.json")
 
-	// Create the ConfigMap
-	// err = createConfigMap(clientset, buildName, buildNamespace)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// Create go configmap
-	// err = createGoConfigMap(clientset, buildNamespace)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
+	if err != nil {
+		log.Fatal(err)
+	}
 	// Create the pod
-	err = createBuildPod(clientset, buildName, buildNamespace)
+	// err = createBuildPod(clientset, jsonContents, buildName, buildNamespace)
+	err = createBuildPod(clientset, jsonContents.PodCfg, buildName, buildNamespace)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,8 +122,27 @@ func main() {
 	fmt.Println("Build pod created successfully")
 }
 
-func createBuildPod(clientset *kubernetes.Clientset, buildName, buildNamespace string) error {
+func readJsonFile(filePath string) (JsonConfigStruct, error) {
+	// Read the file
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		fmt.Println(err)
+		return JsonConfigStruct{}, err
+	}
+	var jsonconfig JsonConfigStruct
+	err = json.Unmarshal(data, &jsonconfig)
+
+	if err != nil {
+		fmt.Println(err)
+		return JsonConfigStruct{}, err
+	}
+	return jsonconfig, nil
+}
+
+func createBuildPod(clientset *kubernetes.Clientset, jsonPod PodConfig, buildName, buildNamespace string) error {
 	// Create pod specification
+	fmt.Println(">> PodCPU", jsonPod.CPU)
+	fmt.Println(">> PodMemory", jsonPod.Memory)
 	pod := &corev1.Pod{
 		ObjectMeta: metaV1.ObjectMeta{
 			Name:      buildName,
@@ -83,18 +151,19 @@ func createBuildPod(clientset *kubernetes.Clientset, buildName, buildNamespace s
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
-					Name:  "build-container",
-					Image: "shreeharivl/kcd:0.1",
+					Name:            "build-container",
+					Image:           "shreeharivl/kcd:0.2",
+					ImagePullPolicy: "Always",
 					Resources: corev1.ResourceRequirements{
 						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("1"),
-							corev1.ResourceMemory: resource.MustParse("512Mi"),
+							corev1.ResourceCPU:    resource.MustParse(jsonPod.CPU),
+							corev1.ResourceMemory: resource.MustParse(jsonPod.Memory),
 						},
 					},
 					VolumeMounts: []corev1.VolumeMount{
 						{
-							Name:      "phases-volume",
-							MountPath: "/phases",
+							Name:      "user-config-volume",
+							MountPath: "/config",
 						},
 					},
 					Command: []string{"./main"},
@@ -103,21 +172,11 @@ func createBuildPod(clientset *kubernetes.Clientset, buildName, buildNamespace s
 			RestartPolicy: corev1.RestartPolicyNever,
 			Volumes: []corev1.Volume{
 				{
-					Name: "phases-volume",
+					Name: "user-config-volume",
 					VolumeSource: corev1.VolumeSource{
 						ConfigMap: &corev1.ConfigMapVolumeSource{
 							LocalObjectReference: corev1.LocalObjectReference{
 								Name: buildName,
-							},
-						},
-					},
-				},
-				{
-					Name: "phases-volume2",
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: "goconfigmap",
 							},
 						},
 					},
@@ -142,57 +201,17 @@ func createBuildPod(clientset *kubernetes.Clientset, buildName, buildNamespace s
 	return nil
 }
 
-func createConfigMap(clientset *kubernetes.Clientset, buildName, buildNamespace string) error {
+// func createConfigMap(clientset *kubernetes.Clientset, buildName, buildNamespace string, configMapFileContents string, configMapFileName string) error {
+func createConfigMap(clientset *kubernetes.Clientset, buildName, buildNamespace string, configMapFileContents PhasesConfig, configMapFileName string) error {
+
 	// Create ConfigMap data
+	config_data, err := json.Marshal(configMapFileContents)
+	if err != nil {
+		fmt.Println("Unable to marshal json")
+		log.Fatal(err)
+	}
 	data := make(map[string]string)
-	data["run-phases.sh"] = `#!/bin/bash
-
-set -e
-
-# Download phase
-echo ">>> Inside the pod"
-
-echo ">>> Creating a directory"
-mkdir random-folder
-
-echo ">>> Going into created folder"
-cd random-folder
-
-echo ">>> Copying files/folders"
-# Get the source directory
-source_directory="/phases"
-
-# Get the destination directory
-destination_directory="."
-
-# Copy the source directory to the destination directory
-cp -r $source_directory $destination_directory
-
-echo ">>> Files/Folders Current directory"
-ls .
-
-echo ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
-echo ">>> Copying runner"
-echo $(ls)
-echo "Hello"
-
-
-echo ">>> Files/Folders Current directory"
-# Get the current directory
-current_directory=$(pwd)
-
-# Print all files in the current directory
-for file in $current_directory/*; do
-  echo $file
-done
-
-# Print all folders in the current directory
-for folder in $current_directory/*/; do
-  echo $folder
-done
-
-sleep 180
-`
+	data[configMapFileName] = string(config_data)
 
 	// Create the ConfigMap object
 	configMap := &corev1.ConfigMap{
@@ -203,7 +222,7 @@ sleep 180
 		Data: data,
 	}
 	// check if ConfigMap exists
-	_, err := clientset.CoreV1().ConfigMaps(buildNamespace).Get(context.TODO(), configMap.Name, metaV1.GetOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(buildNamespace).Get(context.TODO(), configMap.Name, metaV1.GetOptions{})
 	if err == nil {
 		fmt.Println("ConfigMap Exists")
 		clientset.CoreV1().ConfigMaps(buildNamespace).Delete(context.TODO(), configMap.Name, metaV1.DeleteOptions{})
