@@ -123,6 +123,9 @@ func readConfigJson(filePath string) (PhasesConfig, error) {
 func main() {
 	configJson, err := readConfigJson("/config/config.json")
 
+	if err != nil {
+		panic(err)
+	}
 	log.Println(configJson)
 	// Execute the phases
 	err = handlePhases(configJson)
